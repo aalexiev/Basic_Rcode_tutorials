@@ -1,0 +1,69 @@
+---
+title: "template"
+author: "Alexandra Alexiev"
+date: "2025-01-15"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+# knit options for whole doc. I will add in specific chunks when I don't want this to be the case
+knitr::opts_chunk$set(echo = TRUE, # show code
+                      eval = TRUE, # run chunks when knitting
+                      include = TRUE, # include chunk input in final doc
+                      warning = FALSE, # do not show warnings in final doc
+                      message = FALSE, # do not show messages from code in final doc
+                      collapse = TRUE, # when possible, do put multiple outputs in one block
+                      dpi = 300, # fig resolution
+                      fig.dim = c(9, 5), # the default figure dimensions
+                      out.width = "98%", # the default figure output width
+                      out.height = "98%", # the default figure output height 
+                      cache = TRUE) # dont rerun chunks that haven't been changed
+
+```
+
+## libraries and directories
+
+```{r libraries}
+# these are some commonly used ones I almost always load
+library(tibble)
+library(dplyr)
+library(vegan)
+library(ggplot2)
+set.seed(3) # set seed if you're going to do certain types of stats
+
+```
+
+```{r set working dir, eval=F}
+setwd("/Users/alexieva/Documents/Projects/Analysis/XXX")
+
+load("/Users/alexieva/Documents/Projects/Analysis/XXX.RData")
+
+```
+
+## Input data
+
+```{r input whatever data you need}
+# usually I have a taxa table of taxa (as columns) vs samples (as rows)
+MB_taxtable <- read.delim("XXX", header = T, sep = "/t")
+# usually I also have a metadata table with the first column being all the sample IDs (must match the above taxa table) and all other data related to those samples
+metadata_tab <- read.delim("XXX", header = T, sep = "/t")
+# If there is massive data manipulation that needs to happen before you start analysis, it's a good idea to do that in a separate R file and save the resulting data frames, then import them into each analysis R file you make from there.
+
+```
+
+## Organizing analysis chunks
+I like to organize my chunks in a few different ways:
+- if it's exploratory analysis, I organize them by the type of test or graph or statistical hypothesis
+- if I have specific experimental questions, I write my hypothesis at the start of the R markdown and then add the subheaders as the questions I tested
+- if the project had phases or distinct goals or aims, I organize my subheaders by these goals/aims
+
+It's always a good idea to put a reamble under subheaders to explain the rationale behind the analysis chosen and/or any considerations related to the data that wouldn't be immediately apparent to, say, a reviewer or your far-future self.
+
+## save image chunk 
+```{r save env, eval = F}
+save.image("/Users/alexieva/Documents/Projects/Analysis/XXX.RData")
+
+```

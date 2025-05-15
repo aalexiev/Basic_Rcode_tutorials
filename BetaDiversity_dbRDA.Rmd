@@ -1,0 +1,181 @@
+---
+title: "Running and graphing a basic dbRDA ordination"
+author: "Alexandra Alexiev"
+date: "2025-01-15"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+This code and input files are derived from this github repo: https://github.com/aalexiev/ZebrafishBaPIntergenerationalMB and from the R markdown file titled zfBaP_PubAnalysis.Rmd in that repo. This was used to publish figures such as 4C and D or 7A in https://doi.org/10.3390/toxics13010010. We used a distance-based RDA as the ordination technique because we wanted to use a model to constrain the ordination.
+
+```{r setup, include=FALSE}
+# knit options for whole doc. I will add in specific chunks when I don't want this to be the case
+knitr::opts_chunk$set(echo = TRUE, # show code
+                      eval = TRUE, # run chunks when knitting
+                      include = TRUE, # include chunk input in final doc
+                      warning = FALSE, # do not show warnings in final doc
+                      message = FALSE, # do not show messages from code in final doc
+                      collapse = TRUE, # when possible, do put multiple outputs in one block
+                      dpi = 300, # fig resolution
+                      fig.dim = c(9, 5), # the default figure dimensions
+                      out.width = "98%", # the default figure output width
+                      out.height = "98%", # the default figure output height 
+                      cache = TRUE) # dont rerun chunks that haven't been changed
+
+```
+
+## libraries and directories
+
+```{r libraries}
+library(ggpubr)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(gridExtra)
+library(knitr)
+library(stringr)
+library(vegan)
+library(MASS)
+# set seed so stats like permanova are reproducible
+set.seed(3)
+
+```
+
+```{r set working dir, eval=F}
+setwd("/Users/alexieva/Documents/Projects/Analysis/XXX")
+
+load("/Users/alexieva/Documents/Projects/Analysis/XXX.RData")
+
+```
+
+## Input data
+
+```{r read in files}
+# abundance of pathways in whole dataset
+pathabund_tab_ALL <- read.csv(file = paste0(input_dir, "pathabund_tab_ALL.txt"), 
+                             sep = "\t",
+                             header = TRUE)
+
+# metadata for whole dataset
+metaALL <- read.csv(file = paste0(input_dir, "meta_tab_ALL.txt"),
+                   sep = "\t",
+                   header = TRUE) %>%
+  mutate(Exposure = relevel(factor(Exposure), "DMSO"), Morpholino = relevel(factor(Morpholino), "CoMo"),
+         Generation = factor(Generation),
+         Sex = factor(Sex), # relevel and factor so these are accurate
+         BMI = Weight_g / (Length_mm/1000)^2) # add BMI calculation
+
+# reorder factors for treatment
+metaALL$Treatments <- factor(x = metaALL$Treatments,
+                             levels = c("CoMo_DMSO",
+                                        "CoMo_BaP",
+                                        "AHR2Mo_DMSO",
+                                        "AHR2Mo_BaP"))
+
+
+```
+
+## Select optimal model
+Use ordistep to select the model that best explains the data in a dbRDA. You can use ordistep with other types of constrained ordination in vegan. Capscale() is the function that corresponds with a dbRDA.
+```{r ordistep model selection, eval=F}
+# first subset the data to include only the relevant variables
+meta_modALL <- metaALL %>%
+  dplyr::select(c("Exposure", "Morpholino", "Generation", "Sex", "BMI"))
+# make a model construct with the intercept only; this is to see if the models with variables are actually a better fit compared to...well...no variables.
+ALLmod0 <- capscale(pathabund_tab_ALL ~ 1, meta_modALL, distance = "bray")
+# make a model construct with all variables in the column of the metadata file (the period) and a few interactions we were interested in (the colon variables)
+ALLmod1 <- capscale(pathabund_tab_ALL ~ . + Exposure:Morpholino + Morpholino:Exposure + Generation:Exposure + Generation:Morpholino + Sex:BMI, meta_modALL, distance = "bray")
+# this determines what the best model is to run RDA on
+pw_ordiALL <- ordistep(ALLmod0, scope = formula(ALLmod1))
+pw_ordiALL
+
+# best model formula is listed at the top
+# model inertia is scaled Chi-square, worth recording
+# proportion variance explained is also given and worth recording
+
+```
+
+Now run the dbRDA with the formula from the selected optimal model determined by ordistep
+```{r run dbRDA}
+# calculate RDA (distance based), using optimal model formula from ordistep above
+pw_rda <- capscale(formula = pathabund_tab_ALL ~ Generation + Exposure + Morpholino + Generation:Exposure + Exposure:Morpholino + Generation:Morpholino, 
+                   data = meta_modALL, distance = "bray")
+# using bray-curtis distance again
+# have to adjust the R squared manually
+RsquareAdj(pw_rda)
+# this gives the amount of variation explained by the model
+
+
+```
+
+# Graph the ordination
+```{r graph dbRDA}
+# create input files for graphing
+smry_rda <- summary(pw_rda)
+
+# this is the coordinates for the points and metadata
+pw_PC1  <- data.frame(smry_rda$sites[,1:2]) %>%  # these are the x, y coordinates for the sample points
+  rownames_to_column("SampleID") %>%
+  inner_join(dplyr::select(metaALL, c(SampleID, Treatments, Generation, Exposure, Morpholino)), by = "SampleID") %>%
+  mutate(treatgen = paste0(Treatments, "_", Generation)) %>%
+  column_to_rownames("SampleID")
+
+# reorder the treatments
+pw_PC1$Treatments <- factor(x = pw_PC1$Treatments,
+                             levels = c("CoMo_DMSO",
+                                        "CoMo_BaP",
+                                        "AHR2Mo_DMSO",
+                                        "AHR2Mo_BaP"))
+# set the graph axis limits
+mylims <- range(with(pw_PC1, c(CAP1, CAP2)))
+
+# the biplot scores are the correlations between your environmental variables and axes
+pw_PC2  <- data.frame(smry_rda$biplot)
+
+# put the plot together in ggplot
+pwrda_plot <- ggplot(pw_PC1, aes(x = CAP1, y = CAP2)) + 
+  geom_point(aes(color = Treatments), size = 2) +
+  stat_ellipse(aes(group = treatgen, 
+                   color = Treatments), 
+               show.legend = T) +
+  theme_classic() +
+  labs(x = paste0("CAP1 (",round(100*smry_rda$cont$importance[2, "CAP1"], digits = 2),"%)"), # the importance is the variation explained by each axis
+       y = paste0("CAP2 (",round(100*smry_rda$cont$importance[2, "CAP2"], digits = 2),"%)")) +
+  scale_color_brewer(palette = "PuOr", direction = -1, # this direction argument just reverses the order of colors in the pre-made palette
+                     labels = c("AhR2Mo - / BaP -",
+                               "AhR2Mo - / BaP +",
+                               "AhR2Mo + / BaP -",
+                               "AhR2Mo + / BaP +")) +
+  theme(text = element_text(size = 20)) +
+  scale_shape_discrete(name = "Generation shape") +
+  scale_linetype_discrete(name = "Ellipse line type") +
+  facet_wrap("Generation")
+
+pwrda_plot
+
+```
+
+# Stats
+Lastly, we run a PERMANOVA on the optimal model formula from ordistep above
+```{r permanova best model}
+# calculate bray curtis matrix on an abundance matrix
+pw_dm <- vegdist(pathabund_tab_ALL, method = "bray")
+
+# run a PERMANOVA where X is variables from the optimal model formula from above
+# Y is the bray-curtis matrix
+PermExpandMod_pw <- adonis2(pw_dm ~ Generation + Exposure + Morpholino + Generation:Exposure + Exposure:Morpholino + Generation:Morpholino, data = metaALL)
+
+PermExpandMod_pw
+# record the R^2 (amount of variation explained by each variable tested)
+# record p-value 
+
+```
+
+
+## save image chunk 
+```{r save env, eval = F}
+save.image("/Users/alexieva/Documents/Projects/Analysis/XXX.RData")
+
+```

@@ -1,0 +1,249 @@
+---
+title: "Basic Beta Diversity"
+author: "Alexandra Alexiev"
+date: "2025-05-15"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+# knit options for whole doc. I will add in specific chunks when I don't want this to be the case
+knitr::opts_chunk$set(echo = TRUE, # show code
+                      eval = TRUE, # run chunks when knitting
+                      include = TRUE, # include chunk input in final doc
+                      warning = FALSE, # do not show warnings in final doc
+                      message = FALSE, # do not show messages from code in final doc
+                      collapse = TRUE, # when possible, do put multiple outputs in one block
+                      dpi = 300, # fig resolution
+                      fig.dim = c(9, 5), # the default figure dimensions
+                      out.width = "98%", # the default figure output width
+                      out.height = "98%", # the default figure output height 
+                      cache = TRUE) # dont rerun chunks that haven't been changed
+
+```
+
+## libraries and directories
+
+```{r libraries}
+# these are some commonly used ones I almost always load
+library(tibble)
+library(dplyr)
+library(vegan)
+library(ggplot2)
+set.seed(3) # set seed if you're going to do certain types of stats
+
+```
+
+```{r set working dir, eval=F}
+setwd("/Users/alexieva/Documents/Projects/Analysis/XXX")
+
+load("/Users/alexieva/Documents/Projects/Analysis/XXX.RData")
+
+```
+
+
+## Input files
+
+```{r load input files and clean up}
+#load in starting files
+mapfp_all <- paste0(work_dir,"Allsamps_clean_maptab.txt")
+tabfp_all <- paste0(work_dir,"Allsamps_clean_otutab.txt")
+input_all <- load_taxa_table(tab_fp = tabfp_all, map_fp = mapfp_all) # this file has both toad and environment sample types in it (169 samples)
+mapfp_t <- paste0(work_dir,"Toad_clean_maptab.txt")
+tabfp_t <- paste0(work_dir,"Toad_clean_otutab.txt")
+input_toad <- load_taxa_table(tab_fp = tabfp_t, map_fp = mapfp_t) # this file only has toad samples in it (124 samples)
+
+# order by life stage
+life_list <- c("Sediment", "Water",
+               "Eggs.11.15", "Tadpole.20.22",
+               "Tadpole.23.25", "Tadpole.25.27",
+               "Tadpole.27.29", "Tadpole.29.31",
+               "Tadpole.31.35", "Tadpole.36.39",
+               "Metamorph.40.46", "Subadult", "Adult")
+input_all$map_loaded$Gosner_Stage <-
+    factor(input_all$map_loaded$Gosner_Stage,
+           levels = life_list)
+input_toad$map_loaded$Gosner_Stage <-
+    factor(input_toad$map_loaded$Gosner_Stage,
+           levels = life_list)
+# and order the other column I'll be using as well, where tadpoles are lumped
+samptype_list <- c("Sediment", "Water", "Eggs",
+                   "Tadpole", "Metamorph", "Subadult", "Adult")
+input_all$map_loaded$Life_Stage_Simplified <-
+    factor(input_all$map_loaded$Life_Stage_Simplified,
+           levels = samptype_list)
+input_toad$map_loaded$Life_Stage_Simplified <-
+    factor(input_toad$map_loaded$Life_Stage_Simplified,
+           levels = samptype_list)
+
+
+```
+
+# Beta diversity calculation and graphing
+First, calculate a beta diversity matrix. It's good practice in the exploratory phase of analysis to try 2-3 metrics, and compare them with a mantel test.
+```{r calculate beta diversity matrix}
+# calculate several beta diversity matrices
+input_toad_rel <- convert_to_relative_abundances(input_toad)
+BC <- vegdist(input_toad_rel$data_loaded, method = "bray")
+EUC <- vegdist(input_toad_rel$data_loaded, method = "euclidean")
+JAC <- vegdist(input_toad_rel$data_loaded, method = "jaccard")
+SOR <- vegdist(input_toad_rel$data_loaded, binary = TRUE) # this is how you do sorenson distance in vegan
+# another good one to try is UniFrac distance, which is applicable in R with the GUniFrac package
+
+# partial mantel to compare if these distances are all comparable (if correlated, then yes)
+mantel(BC, EUC, method = "spearman", permutations = 999)
+mantel(BC, JAC, method = "spearman", permutations = 999)
+mantel(BC, SOR, method = "spearman", permutations = 999)
+mantel(SOR, JAC, method = "spearman", permutations = 999)
+# if p value is less than 0.05, these are correlated (r tells you how correlated)
+# if they are correlated, that means you can choose one without too much consideration,
+# and also that it doesn't matter whether you use a distance- or dissimilarity-based metric.
+
+
+```
+
+Next, we will run a PERMANOVA to test if the groups we anticipate have different beta diversity really do. In this data set, I was wondering if 
+```{r PERMANOVA}
+# bray curtis matrix is Y in the formula
+# input data column is X in the formula
+Perm <- adonis2(BC ~ Life_Stage_Simplified, 
+                data = input_toad$map_loaded,
+                strata = Location)
+Perm
+# the R^2 in a permanova tells you what percent variation is explained by your variable(s)
+# the p-value gives significance
+# both of these should be reported in papers, at minimum
+
+```
+
+We will use the bray-curtis matrix to visualize the data in an NMDS ordination. Other types of commonly seen ordinations include PCA and PCoA.
+```{r NMDS plot}
+# make an NMDS plot with only the toad life stages shown
+# create distance matrix
+md_transformed <- t(sqrt(input_toad$data_loaded))
+dm <- vegdist(md_transformed, method = "bray")
+
+# run NMDS
+md.nmds <- metaMDS(dm, k = 3, trymax = 1000) #solution reached, stress=0.198
+
+#prepare NMDS points and values for graphing
+md.nmds.points <- md.nmds$points %>% # take the NMDS points
+  data.frame() %>% # make a data frame
+  rownames_to_column(var = "mysamples") %>%
+  mutate(SampleID = mysamples) %>%
+  column_to_rownames(var = "mysamples")
+meta <- input_toad$map_loaded %>%
+  rownames_to_column("SampleID")
+md.nmds.metadata <- inner_join(x = md.nmds.points, y = meta, 
+                               by = "SampleID") %>%
+  group_by(Life_Stage_Simplified) %>%
+  ungroup() %>%
+  dplyr::select(SampleID, MDS1, MDS2, everything()) # select these columns only
+md.nmds.metadata.unq <- md.nmds.metadata %>%
+  dplyr::select(Life_Stage_Simplified) %>%
+  unique()
+
+# get stress value
+stress.md = paste("stress =", round(md.nmds$stress, digits = 4))
+# this should be a small number, close to 0, which indicates the fit between the data and the ordination is good
+# this should be reported in papers, so I have it print on the figure for ease
+
+# get NMDS hulls
+group.chulls <- plyr::ddply(md.nmds.metadata, "Life_Stage_Simplified", 
+                            function(df) df[chull(df$MDS1, df$MDS2), ])
+
+# make color pallete
+samptype_cols_Toad <- c("#66A61E", 
+                   "#E7298A", "#7570B3", 
+                   "#D95F02", "#1B9E77")
+
+# Plot NMDS
+nmds.plot.toad <- ggplot(md.nmds.metadata, aes(x = MDS1, y = MDS2, 
+                                               color = Life_Stage_Simplified)) +
+  geom_polygon(data = group.chulls, 
+               aes(fill = Life_Stage_Simplified), 
+               alpha = 0.15, linetype = 0) +
+  geom_point(size = 3) +
+  annotate("text", x = Inf, y = Inf, label = stress.md, hjust = 1, vjust = 1) +
+  ggtitle("D") + 
+  labs(colour = "Life Stage") +
+  scale_colour_manual(values = samptype_cols_Toad) +
+  scale_fill_manual(values = samptype_cols_Toad) +
+  guides(fill = F, color = guide_legend(order = 1, 
+                                        override.aes = list(shape = 15, 
+                                                            size = 6))) +
+  theme(axis.title = element_text(size = 16),
+        axis.text = element_text(size = 14),
+        legend.title = element_text(size = 16),
+        legend.text = element_text(size = 14),
+        plot.title = element_text(size = 30))
+
+# ggsave(paste0(work_dir,"Figs_Tables/nmds.png"), 
+#        nmds.plot.toad, dpi = 300,
+#        width = 13, height = 8)
+
+
+```
+
+Since PERMANOVA doesn't detect differences in the dispersion of the points, we run PERMDisp next. Beta dispersion is the distance between each point in a cluster or group type and the cluster's center - we can then look at the average and variation of this dispersion. This will give us an idea of whether certain groups 
+```{r test dispersion differences and make graph}
+# PERMDisp on sample type
+life.disper.lump <- betadisper(BC, input_all$map_loaded$Life_Stage_Simplified)
+permutest(life.disper.lump)
+PermDisp_life_lump <- TukeyHSD(life.disper.lump) #Tukey post-hoc
+kable(PermDisp_life_lump$group) %>%
+  kable_styling(bootstrap_options = c("striped","bordered"), 
+                full_width = F, position = "left")
+
+# write.table(PermDisp_life_lump$group,
+#             paste0(work_dir,"Figs_Tables/PermDisp_life_lump.txt"),
+#             sep = "\t")
+
+# now make a box and whisker plot to visualize
+Disper1 <- data.frame(life.disper.lump$distances)
+colnames(Disper1) <- "dispers"
+meta <- meta <- input_all$map_loaded %>%
+  rownames_to_column("SampleID")
+Disper2 <- Disper1 %>%
+  rownames_to_column("SampleID") %>%
+  inner_join(y = meta, 
+             by = "SampleID")
+
+disper_bars <- ggplot(data = Disper2, aes(x = Life_Stage_Simplified, 
+                                          y = dispers)) +
+  geom_boxplot(aes(fill = Life_Stage_Simplified), alpha = 0.6, 
+               outlier.shape = NA) + 
+  ylab("Dispersion") + xlab("") + ggtitle("B") +
+  geom_point(aes(fill = Life_Stage_Simplified), size = 3, shape = 21, position = position_jitter(
+    width = 0.25
+  )) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, colour = "black"),
+        axis.text.y = element_text(colour = "black"),
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 14),
+        legend.title = element_text(size = 16),
+        legend.text = element_text(size = 14),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        plot.title = element_text(size = 30)) +
+  labs(fill = "Sample Type") +
+  scale_fill_manual(values = samptype_cols)
+
+# ggsave(paste0(work_dir,"Figs_Tables/beta_disper.png"), 
+#        disper_bars, dpi = 300,
+#        width = 13, height = 8)
+
+
+```
+
+
+
+## save image chunk 
+```{r save env, eval = F}
+save.image("/Users/alexieva/Documents/Projects/Analysis/XXX.RData")
+
+```

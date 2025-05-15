@@ -1,0 +1,277 @@
+---
+title: "Alpha Diversity"
+author: "Alexandra Alexiev"
+date: "2025-05-14"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+# knit options for whole doc. I will add in specific chunks when I don't want this to be the case
+knitr::opts_chunk$set(echo = TRUE, # show code
+                      eval = TRUE, # run chunks when knitting
+                      include = TRUE, # include chunk input in final doc
+                      warning = FALSE, # do not show warnings in final doc
+                      message = FALSE, # do not show messages from code in final doc
+                      collapse = TRUE, # when possible, do put multiple outputs in one block
+                      dpi = 300, # fig resolution
+                      fig.dim = c(9, 5), # the default figure dimensions
+                      out.width = "98%", # the default figure output width
+                      out.height = "98%", # the default figure output height 
+                      cache = TRUE) # dont rerun chunks that haven't been changed
+
+```
+
+## libraries and directories
+
+```{r libraries}
+#packages and set working directory
+library(vegan)
+library(ggplot2)
+library(mctoolsr)
+library(tidyr)
+library(tibble)
+library(gridExtra)
+library(dplyr)
+library(ggpubr)
+library(cowplot)
+library(kableExtra)
+library(RColorBrewer)
+set.seed(33333)
+work_dir <- "/Users/alal3493/Documents/Projects/DevelopmentalBorealToad/FungalDevData/02_PublishedAnalysis/"
+seq_dir <- "/Users/alal3493/Documents/Projects/DevelopmentalBorealToad/FungalDevData/00_SeqProcessing/"
+
+```
+
+```{r set working dir, eval=F}
+setwd("/Users/alexieva/Documents/Projects/Analysis/XXX")
+
+load("/Users/alexieva/Documents/Projects/Analysis/XXX.RData")
+
+```
+
+## Basic measures of highly abundant or present taxa
+
+```{r load input files and clean up}
+#load in starting files
+mapfp_all <- paste0(work_dir,"Allsamps_clean_maptab.txt")
+tabfp_all <- paste0(work_dir,"Allsamps_clean_otutab.txt")
+input_all <- load_taxa_table(tab_fp = tabfp_all, map_fp = mapfp_all) # this file has both toad and environment sample types in it (169 samples)
+mapfp_t <- paste0(work_dir,"Toad_clean_maptab.txt")
+tabfp_t <- paste0(work_dir,"Toad_clean_otutab.txt")
+input_toad <- load_taxa_table(tab_fp = tabfp_t, map_fp = mapfp_t) # this file only has toad samples in it (124 samples)
+
+# order by life stage
+life_list <- c("Sediment", "Water",
+               "Eggs.11.15", "Tadpole.20.22",
+               "Tadpole.23.25", "Tadpole.25.27",
+               "Tadpole.27.29", "Tadpole.29.31",
+               "Tadpole.31.35", "Tadpole.36.39",
+               "Metamorph.40.46", "Subadult", "Adult")
+input_all$map_loaded$Gosner_Stage <-
+    factor(input_all$map_loaded$Gosner_Stage,
+           levels = life_list)
+input_toad$map_loaded$Gosner_Stage <-
+    factor(input_toad$map_loaded$Gosner_Stage,
+           levels = life_list)
+# and order the other column I'll be using as well, where tadpoles are lumped
+samptype_list <- c("Sediment", "Water", "Eggs",
+                   "Tadpole", "Metamorph", "Subadult", "Adult")
+input_all$map_loaded$Life_Stage_Simplified <-
+    factor(input_all$map_loaded$Life_Stage_Simplified,
+           levels = samptype_list)
+input_toad$map_loaded$Life_Stage_Simplified <-
+    factor(input_toad$map_loaded$Life_Stage_Simplified,
+           levels = samptype_list)
+
+
+```
+
+```{r basic measures of taxa}
+# number of total fungal taxa found in all samples
+nrow(input_all$data_loaded) # 2156
+nrow(input_toad$data_loaded) # 1760
+
+# total number of sequences
+input_sums <- input_all$data_loaded
+input_sums$rowsums <- rowSums(input_sums)
+colSums(input_sums) # 168627 seqs
+
+# top ten taxa on toads and in environment
+toptaxa_all <- return_top_taxa(input = input_all, number_taxa = 10)
+toptaxa_toad <- return_top_taxa(input = input_toad, number_taxa = 10)
+kable(toptaxa_all, caption = "Top ten taxa in toad and environment samples") %>% 
+    kable_styling(bootstrap_options = c("striped","bordered"), 
+                  full_width = F, position = "left")
+kable(toptaxa_toad, caption = "Top ten taxa in toad samples") %>% 
+    kable_styling(bootstrap_options = c("striped","bordered"), 
+                  full_width = F, position = "left")
+
+
+```
+
+# Alpha diversity differences between life stages and environment samples
+
+Below is a supplementary figure from 10.1371/journal.pone.0256328 comparing three alpha diversity measures across all the sample types. Since site is a confounding factor here, given exploratory analyses, I analyzed with blocking by site ("strata").
+
+```{r calculate three alpha diversity metrics}
+# calculate alpha diversity measures and add to metadata file as a new column
+input_all$map_loaded$rich = calc_diversity(
+  tax_table = input_all$data_loaded, metric = 'richness')
+input_all$map_loaded$simpson = calc_diversity(
+  tax_table = input_all$data_loaded, metric = 'simpson')
+input_all$map_loaded$shannon = calc_diversity(
+  tax_table = input_all$data_loaded, metric = 'shannon')
+
+
+```
+
+Run a Kruskal-wallis test (a non-parametric test of differences between groups) to compare alpha adversity of skin microbiome samples across life stages of the toad, with site as strata
+```{r kruskal-wallis test}
+# species richness
+# first line runs the test; alpha diversity column is Y, metadata variables of interest are the X
+krusk_rich <- kruskal.test(input_all$map_loaded$rich ~ 
+                              input_all$map_loaded$Gosner_Stage)
+# next, do bonferroni p value adjustment for multiple comparisons
+bonpval_rich <- p.adjust(p = krusk_rich$p.value, method = "bonferroni", 
+         n = length(unique(input_all$map_loaded$Gosner_Stage)))
+# print values
+krusk_rich; bonpval_rich
+
+# simpson (evenness)
+krusk_simp <- kruskal.test(input_all$map_loaded$simpson ~ 
+                              input_all$map_loaded$Gosner_Stage)
+bonpval_simp <- p.adjust(p = krusk_simp$p.value, method = "bonferroni", 
+         n = length(unique(input_all$map_loaded$Gosner_Stage)))
+krusk_simp; bonpval_simp
+
+# shannon (both richness and evenness)
+krusk_shan <- kruskal.test(input_all$map_loaded$shannon ~ 
+                              input_all$map_loaded$Gosner_Stage)
+bonpval_shan <- p.adjust(p = krusk_shan$p.value, method = "bonferroni", 
+         n = length(unique(input_all$map_loaded$Gosner_Stage)))
+krusk_shan; bonpval_shan
+
+
+```
+
+An alternate way to test alpha diversity differences is to use a linear model, which is especially useful if you want to test for an optimal model given many metadata variables.
+```{r linear model alpha diversity test}
+# step AIC is used with a linear model to test which metadata variables correlate with alpha diversity
+# this is especially useful if you have multiple variables to test
+# alpha diversity metric column in your metadata is the Y in the formula
+# any other variables from metadata are the X
+# use the metadata file as "data"
+lm_shan <- lm(shannon ~ Life_Stage_Simplified + Location, 
+                    data = input_all$map_loaded)
+# if you have multiple variables
+AIC_test <- stepAIC(lm_shan)
+lm_shan <- summary(AIC_test)
+lm_shan
+
+# this should give you the results for the optimal linear model from AIC
+
+
+```
+
+
+```{r graph}
+# Species richness graphs: mean number of OTUs found per sample type
+liferich <- ggplot(input_all$map_loaded, aes(Gosner_Stage, rich)) + 
+  geom_boxplot() + xlab("") + 
+  ylab("Fungal OTU Richness") + ggtitle("A") +
+  geom_text(x = 7, y = 194, size = 3,
+            label = paste0("KW chi-sq stat=",signif(krusk_rich$statistic,
+                                                    digits = 5),
+                         "\n","p=",signif(bonpval_rich, digits = 3))) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, colour = "black"),
+        axis.text.y = element_text(colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))
+
+# Simpson's: measures species/OTU evenness, or how close in number each species in the environment
+lifesimp <- ggplot(input_all$map_loaded, aes(Gosner_Stage, simpson)) + 
+  geom_boxplot() + xlab("Sample Type") + 
+  ylab("Simpson's Diversity Metric") +  ylim(0,1.2) + ggtitle("B") +
+  geom_text(x = 7, y = 1.15, size = 3,
+            label = paste0("KW chi-sq stat=",signif(krusk_simp$statistic, 
+                                                  digits = 5),
+                         "\n","p=",signif(bonpval_simp, digits = 3))) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, colour = "black"),
+        axis.text.y = element_text(colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))
+
+# Shannon: combination of richness and evenness
+lifeshan <- ggplot(input_all$map_loaded, aes(Gosner_Stage, shannon)) + 
+  geom_boxplot() + xlab("") + 
+  ylab("Shannon Diversity Index") + ggtitle("C") +
+  geom_text(x = 7, y = 4.1, size = 3,
+            label = paste0("KW chi-sq stat=",signif(krusk_shan$statistic,
+                                                  digits = 5),
+                         "\n","p=",signif(bonpval_shan, digits = 3))) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, colour = "black"),
+        axis.text.y = element_text(colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))
+
+alpha_panel <- grid.arrange(liferich, lifesimp, lifeshan, ncol = 3)
+alpha_panel
+
+# ggsave(paste0(work_dir,"Figs_Tables/AllAlphaDiv.png"),
+#        alpha_panel, dpi = 300,
+#        width = 10, height = 7)
+
+
+```
+
+# Pairwise OTU richness Stats
+
+- Here, I'm using a two-sample Mann-Whitney test (or unpaired wilcoxon test). This is a non-parametric test of whether two populations are different across two different life stages, while still assuming those populations are independent. Since my samples came from different animals at different life stages, I need to make this assumption, so I cannot use a paired wilcoxon test.
+- I calculated Bonferroni (signif if p<=0.05) and FDR (p<=0.05) p-value corrections, used both together to figure out how big of a difference there was between each life stage.
+
+```{r pairwise significance alpha diversity}
+# Are pairwise alpha diversities same or different across life stages?
+nlevels(input_all$map_loaded$Gosner_Stage) # 13
+cats <- levels(input_all$map_loaded$Gosner_Stage) # define category levels
+cats_pairs <- combn(cats, 2) # make pairs of these
+pvals <- c() # output df for pvalues
+Wstat <- c() # output df for Wstat
+
+for ( i in 1:ncol(cats_pairs) ) { # for each pair of sample types
+    pair <- cats_pairs[, i] # define the pair
+    Gosner_rich <- input_all$map_loaded %>% # take the mapping file
+    dplyr::select(Gosner_Stage, rich) %>% # select these two columns from it
+    dplyr::filter(Gosner_Stage %in% pair) # filter the sample types in the pair
+    wil <- wilcox.test(rich ~ Gosner_Stage, data = Gosner_rich, paired = F, exact = F) # run Wilcoxon test
+    pvals <- c(pvals, wil$p.value) # save the p val
+    Wstat <- c(Wstat, wil$statistic) # save the W statistic
+}
+results <- data.frame(t(cats_pairs), Wstat, pvals) # make a dataframe of the useful outputs
+results$pvalBon = pvals * length(pvals) # calc bonferroni pval correction
+results$pvalFDR = round(pvals * (length(pvals) / rank(pvals, ties.method = "average")),
+                          3) # calc FDR pval correction
+results <- results %>%
+  arrange(pvalBon, pvalFDR) %>% # arrange in ascending order by the corrected pvals
+  filter(pvalBon <= 0.05) %>%
+  filter(pvalFDR <= 0.05) %>% # filter by the two corrected pvals being <= 0.05
+  dplyr::select(-pvals) # remove pval column
+
+# write.table(results, paste0(work_dir, "Figs_Tables/pairedMW_alphadiv.txt"),
+#             sep="\t", quote = F, row.names = F)
+
+```
+
+## save image chunk 
+```{r save env, eval = F}
+save.image("/Users/alexieva/Documents/Projects/Analysis/XXX.RData")
+
+```
